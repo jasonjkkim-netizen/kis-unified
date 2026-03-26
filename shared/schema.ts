@@ -190,6 +190,87 @@ export const SECTOR_BATTERY = [
   { code: "068270", name: "셀트리온" },
 ];
 
+// ─── Biotech Sector Definitions ─────────────────────────────────
+
+export type BiotechSector = "biopharm" | "cdmo" | "newdrug" | "meddevice" | "diagnostic" | "cro";
+
+export const BIOTECH_SECTOR_LABELS: Record<BiotechSector, string> = {
+  biopharm: "바이오의약품",
+  cdmo: "CDMO/CMO",
+  newdrug: "신약개발",
+  meddevice: "의료기기",
+  diagnostic: "진단/체외진단",
+  cro: "CRO/임상",
+};
+
+export const BIOTECH_SECTORS: Record<BiotechSector, { code: string; name: string }[]> = {
+  biopharm: [
+    { code: "068270", name: "셀트리온" },
+    { code: "207940", name: "삼성바이오로직스" },
+    { code: "302440", name: "SK바이오사이언스" },
+    { code: "128940", name: "한미약품" },
+    { code: "000100", name: "유한양행" },
+    { code: "005690", name: "파미셀" },
+    { code: "006280", name: "녹십자" },
+    { code: "000640", name: "동아쏘시오홀딩스" },
+    { code: "185750", name: "종근당" },
+    { code: "003090", name: "대웅" },
+  ],
+  cdmo: [
+    { code: "207940", name: "삼성바이오로직스" },
+    { code: "328130", name: "루닛" },
+    { code: "145020", name: "휴젤" },
+    { code: "268600", name: "셀리버리" },
+    { code: "950160", name: "코오롱티슈진" },
+    { code: "214370", name: "케어젠" },
+    { code: "067080", name: "대화제약" },
+    { code: "043150", name: "바텍" },
+  ],
+  newdrug: [
+    { code: "326030", name: "SK바이오팜" },
+    { code: "195940", name: "HK이노엔" },
+    { code: "141080", name: "레고켐바이오" },
+    { code: "108860", name: "셀바스AI" },
+    { code: "215600", name: "신라젠" },
+    { code: "096530", name: "씨젠" },
+    { code: "247540", name: "에코프로비엠" },
+    { code: "950170", name: "JW신약" },
+    { code: "222080", name: "씨에스윈드" },
+    { code: "214390", name: "경보제약" },
+  ],
+  meddevice: [
+    { code: "128940", name: "한미약품" },
+    { code: "436530", name: "케이비제22호스팩" },
+    { code: "043150", name: "바텍" },
+    { code: "053800", name: "안국약품" },
+    { code: "004370", name: "농심" },
+    { code: "237690", name: "에스티팜" },
+    { code: "138040", name: "메리츠금융지주" },
+    { code: "085660", name: "차바이오텍" },
+    { code: "263750", name: "펄어비스" },
+    { code: "290650", name: "엘앤씨바이오" },
+  ],
+  diagnostic: [
+    { code: "096530", name: "씨젠" },
+    { code: "220180", name: "핸디소프트" },
+    { code: "950130", name: "엑세스바이오" },
+    { code: "200670", name: "휴메딕스" },
+    { code: "253840", name: "수젠텍" },
+    { code: "322310", name: "오로스테크놀로지" },
+    { code: "084990", name: "헬릭스미스" },
+    { code: "039200", name: "오스코텍" },
+  ],
+  cro: [
+    { code: "141080", name: "레고켐바이오" },
+    { code: "950170", name: "JW신약" },
+    { code: "067080", name: "대화제약" },
+    { code: "003850", name: "보령" },
+    { code: "214370", name: "케어젠" },
+    { code: "268600", name: "셀리버리" },
+    { code: "085660", name: "차바이오텍" },
+  ],
+};
+
 // ─── Stock Quote (unified real-time data) ────────────────────────
 
 export interface StockQuote {

@@ -9,8 +9,8 @@ import { TelegramService } from "./telegram";
 import { SignalEngine } from "./signals";
 import { TradingEngine } from "./tradingEngine";
 import { AutoScanner } from "./autoScanner";
-import type { TradingSignal, PlaybookData, ScreeningInputs } from "../shared/schema";
-import { screeningInputsSchema } from "../shared/schema";
+import type { TradingSignal, PlaybookData, ScreeningInputs, BiotechSector } from "../shared/schema";
+import { screeningInputsSchema, BIOTECH_SECTORS, BIOTECH_SECTOR_LABELS } from "../shared/schema";
 
 export function createRouter() {
   const router = Router();
@@ -718,6 +718,69 @@ export function createRouter() {
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
       res.setHeader("Content-Disposition", `attachment; filename=screening_${runId}.csv`);
       res.send("\uFEFF" + csv); // BOM for Korean
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Biotech Dashboard
+  // ═══════════════════════════════════════════════════════════════
+
+  router.get("/api/biotech/sectors", (_req: Request, res: Response) => {
+    res.json(BIOTECH_SECTOR_LABELS);
+  });
+
+  router.get("/api/biotech/stocks", async (req: Request, res: Response) => {
+    try {
+      const sector = req.query.sector as BiotechSector | undefined;
+      const sectors = sector ? { [sector]: BIOTECH_SECTORS[sector] } : BIOTECH_SECTORS;
+
+      // Collect unique stock codes across requested sectors
+      const stockMap = new Map<string, { code: string; name: string; sectors: string[] }>();
+      for (const [sectorKey, stocks] of Object.entries(sectors)) {
+        if (!stocks) continue;
+        for (const s of stocks) {
+          const existing = stockMap.get(s.code);
+          if (existing) {
+            existing.sectors.push(sectorKey);
+          } else {
+            stockMap.set(s.code, { code: s.code, name: s.name, sectors: [sectorKey] });
+          }
+        }
+      }
+
+      const results: any[] = [];
+      const api = await getKisApi();
+      for (const [code, info] of stockMap) {
+        try {
+          const price = await api.getStockPrice(code);
+          if (price) {
+            results.push({
+              code: info.code,
+              name: info.name,
+              sectors: info.sectors,
+              price: Number(price.stck_prpr) || 0,
+              change: Number(price.prdy_vrss) || 0,
+              changePercent: Number(price.prdy_ctrt) || 0,
+              volume: Number(price.acml_vol) || 0,
+              tradingValue: Number(price.acml_tr_pbmn) || 0,
+              high: Number(price.stck_hgpr) || 0,
+              low: Number(price.stck_lwpr) || 0,
+              open: Number(price.stck_oprc) || 0,
+              marketCap: Number(price.hts_avls) || 0,
+              per: Number(price.per) || 0,
+              pbr: Number(price.pbr) || 0,
+              high52w: Number(price.stck_dryy_hgpr) || 0,
+              low52w: Number(price.stck_dryy_lwpr) || 0,
+            });
+          }
+        } catch {
+          // Skip stocks that fail to fetch
+        }
+      }
+
+      res.json(results);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

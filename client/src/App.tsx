@@ -5,8 +5,9 @@ import Trading from "./pages/Trading";
 import Signals from "./pages/Signals";
 import TurtleScreen from "./pages/TurtleScreen";
 import SettingsPage from "./pages/Settings";
+import BiotechDashboard from "./pages/BiotechDashboard";
 
-type Page = "dashboard" | "scanner" | "trading" | "signals" | "turtle" | "settings";
+type Page = "dashboard" | "scanner" | "trading" | "signals" | "turtle" | "biotech" | "settings";
 
 const NAV_ITEMS: { id: Page; label: string; icon: string }[] = [
   { id: "dashboard", label: "대시보드", icon: "📊" },
@@ -14,6 +15,7 @@ const NAV_ITEMS: { id: Page; label: string; icon: string }[] = [
   { id: "signals", label: "시그널", icon: "📡" },
   { id: "trading", label: "자동매매", icon: "🤖" },
   { id: "turtle", label: "터틀 스크리닝", icon: "🐢" },
+  { id: "biotech", label: "바이오", icon: "🧬" },
   { id: "settings", label: "설정", icon: "⚙️" },
 ];
 
@@ -54,6 +56,7 @@ export default function App() {
         {page === "trading" && <Trading />}
         {page === "signals" && <Signals />}
         {page === "turtle" && <TurtleScreen />}
+        {page === "biotech" && <BiotechDashboard />}
         {page === "settings" && <SettingsPage />}
       </main>
     </div>

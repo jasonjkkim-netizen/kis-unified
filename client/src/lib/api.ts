@@ -72,4 +72,8 @@ export const api = {
   // KIS
   getKisStatus: () => request<any>("/api/kis/status"),
   getBalance: () => request<any>("/api/kis/balance"),
+
+  // Biotech
+  getBiotechSectors: () => request<Record<string, string>>("/api/biotech/sectors"),
+  getBiotechStocks: (sector?: string) => request<any[]>(`/api/biotech/stocks${sector ? `?sector=${sector}` : ""}`),
 };
