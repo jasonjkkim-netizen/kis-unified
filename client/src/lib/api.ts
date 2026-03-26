@@ -75,5 +75,5 @@ export const api = {
 
   // Biotech
   getBiotechSectors: () => request<Record<string, string>>("/api/biotech/sectors"),
-  getBiotechStocks: (sector?: string) => request<any[]>(`/api/biotech/stocks${sector ? `?sector=${sector}` : ""}`),
+  getBiotechStocks: () => request<any[]>("/api/biotech/stocks"),
 };

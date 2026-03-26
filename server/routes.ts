@@ -9,7 +9,7 @@ import { TelegramService } from "./telegram";
 import { SignalEngine } from "./signals";
 import { TradingEngine } from "./tradingEngine";
 import { AutoScanner } from "./autoScanner";
-import type { TradingSignal, PlaybookData, ScreeningInputs, BiotechSector } from "../shared/schema";
+import type { TradingSignal, PlaybookData, ScreeningInputs } from "../shared/schema";
 import { screeningInputsSchema, BIOTECH_SECTORS, BIOTECH_SECTOR_LABELS } from "../shared/schema";
 
 export function createRouter() {
@@ -731,15 +731,11 @@ export function createRouter() {
     res.json(BIOTECH_SECTOR_LABELS);
   });
 
-  router.get("/api/biotech/stocks", async (req: Request, res: Response) => {
+  router.get("/api/biotech/stocks", async (_req: Request, res: Response) => {
     try {
-      const sector = req.query.sector as BiotechSector | undefined;
-      const sectors = sector ? { [sector]: BIOTECH_SECTORS[sector] } : BIOTECH_SECTORS;
-
-      // Collect unique stock codes across requested sectors
+      // Collect unique stock codes across all sectors
       const stockMap = new Map<string, { code: string; name: string; sectors: string[] }>();
-      for (const [sectorKey, stocks] of Object.entries(sectors)) {
-        if (!stocks) continue;
+      for (const [sectorKey, stocks] of Object.entries(BIOTECH_SECTORS)) {
         for (const s of stocks) {
           const existing = stockMap.get(s.code);
           if (existing) {
@@ -750,35 +746,36 @@ export function createRouter() {
         }
       }
 
-      const results: any[] = [];
       const api = await getKisApi();
-      for (const [code, info] of stockMap) {
-        try {
+      const entries = Array.from(stockMap.entries());
+      const settled = await Promise.allSettled(
+        entries.map(async ([code, info]) => {
           const price = await api.getStockPrice(code);
-          if (price) {
-            results.push({
-              code: info.code,
-              name: info.name,
-              sectors: info.sectors,
-              price: Number(price.stck_prpr) || 0,
-              change: Number(price.prdy_vrss) || 0,
-              changePercent: Number(price.prdy_ctrt) || 0,
-              volume: Number(price.acml_vol) || 0,
-              tradingValue: Number(price.acml_tr_pbmn) || 0,
-              high: Number(price.stck_hgpr) || 0,
-              low: Number(price.stck_lwpr) || 0,
-              open: Number(price.stck_oprc) || 0,
-              marketCap: Number(price.hts_avls) || 0,
-              per: Number(price.per) || 0,
-              pbr: Number(price.pbr) || 0,
-              high52w: Number(price.stck_dryy_hgpr) || 0,
-              low52w: Number(price.stck_dryy_lwpr) || 0,
-            });
-          }
-        } catch {
-          // Skip stocks that fail to fetch
-        }
-      }
+          if (!price) return null;
+          return {
+            code: info.code,
+            name: info.name,
+            sectors: info.sectors,
+            price: Number(price.stck_prpr) || 0,
+            change: Number(price.prdy_vrss) || 0,
+            changePercent: Number(price.prdy_ctrt) || 0,
+            volume: Number(price.acml_vol) || 0,
+            tradingValue: Number(price.acml_tr_pbmn) || 0,
+            high: Number(price.stck_hgpr) || 0,
+            low: Number(price.stck_lwpr) || 0,
+            open: Number(price.stck_oprc) || 0,
+            marketCap: Number(price.hts_avls) || 0,
+            per: Number(price.per) || 0,
+            pbr: Number(price.pbr) || 0,
+            high52w: Number(price.stck_dryy_hgpr) || 0,
+            low52w: Number(price.stck_dryy_lwpr) || 0,
+          };
+        })
+      );
+
+      const results = settled
+        .filter((r): r is PromiseFulfilledResult<any> => r.status === "fulfilled" && r.value != null)
+        .map(r => r.value);
 
       res.json(results);
     } catch (e: any) {
