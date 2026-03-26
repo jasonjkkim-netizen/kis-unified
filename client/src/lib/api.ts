@@ -76,4 +76,5 @@ export const api = {
   // Biotech
   getBiotechSectors: () => request<Record<string, string>>("/api/biotech/sectors"),
   getBiotechStocks: () => request<any[]>("/api/biotech/stocks"),
+  sendBiotechReport: () => request<any>("/api/biotech/report/telegram", { method: "POST" }),
 };

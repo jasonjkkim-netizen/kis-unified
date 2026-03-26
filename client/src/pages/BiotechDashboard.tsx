@@ -54,6 +54,8 @@ export default function BiotechDashboard() {
   const [sortField, setSortField] = useState<SortField>("changePercent");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [searchTerm, setSearchTerm] = useState("");
+  const [sendingReport, setSendingReport] = useState(false);
+  const [reportStatus, setReportStatus] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -120,6 +122,30 @@ export default function BiotechDashboard() {
     }
     return map;
   }, [allStocks]);
+
+  const hotStocks = useMemo(() => {
+    const THRESHOLD = 1000_0000_0000; // 1000억
+    return allStocks
+      .filter(s => s.tradingValue >= THRESHOLD)
+      .sort((a, b) => b.changePercent - a.changePercent);
+  }, [allStocks]);
+
+  const handleSendReport = async () => {
+    setSendingReport(true);
+    setReportStatus(null);
+    try {
+      const result = await api.sendBiotechReport();
+      if (result.success) {
+        setReportStatus(`${result.count || 0}종목 텔레그램 전송 완료`);
+      } else {
+        setReportStatus(result.message || "전송 실패");
+      }
+    } catch (e: any) {
+      setReportStatus(e.message || "전송 실패");
+    } finally {
+      setSendingReport(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -331,6 +357,77 @@ export default function BiotechDashboard() {
           </table>
         </div>
       </div>
+
+      {allStocks.length > 0 && (
+        <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+            <h3 className="font-bold text-gray-900 dark:text-gray-100">
+              거래대금 1,000억+ 종목 ({hotStocks.length})
+            </h3>
+            <div className="flex items-center gap-3">
+              {reportStatus && (
+                <span className="text-sm text-gray-500">{reportStatus}</span>
+              )}
+              <button
+                onClick={handleSendReport}
+                disabled={sendingReport || hotStocks.length === 0}
+                className="px-3 py-1.5 bg-sky-500 text-white rounded-lg text-sm hover:bg-sky-600 disabled:opacity-50 transition-colors"
+              >
+                {sendingReport ? "전송중..." : "텔레그램 전송"}
+              </button>
+            </div>
+          </div>
+          {hotStocks.length === 0 ? (
+            <div className="px-4 py-8 text-center text-gray-500 text-sm">
+              거래대금 1,000억 이상 바이오 종목이 없습니다
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50 dark:bg-gray-800">
+                    <th className="text-left px-4 py-2 font-medium text-gray-600 dark:text-gray-400">종목명</th>
+                    <th className="text-left px-4 py-2 font-medium text-gray-600 dark:text-gray-400">섹터</th>
+                    <th className="text-right px-4 py-2 font-medium text-gray-600 dark:text-gray-400">현재가</th>
+                    <th className="text-right px-4 py-2 font-medium text-gray-600 dark:text-gray-400">등락률</th>
+                    <th className="text-right px-4 py-2 font-medium text-gray-600 dark:text-gray-400">거래대금</th>
+                    <th className="text-right px-4 py-2 font-medium text-gray-600 dark:text-gray-400">시가총액</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {hotStocks.map(stock => (
+                    <tr key={stock.code} className="border-t border-gray-100 dark:border-gray-800">
+                      <td className="px-4 py-2 font-medium text-gray-900 dark:text-gray-100">
+                        {stock.name}
+                        <span className="ml-2 text-xs text-gray-400 font-mono">{stock.code}</span>
+                      </td>
+                      <td className="px-4 py-2">
+                        <div className="flex flex-wrap gap-1">
+                          {stock.sectors.map(s => (
+                            <span key={s} className={`px-2 py-0.5 rounded-full text-xs font-medium ${SECTOR_COLORS[s] || "bg-gray-100 text-gray-600"}`}>
+                              {BIOTECH_SECTOR_LABELS[s as BiotechSector] || s}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="px-4 py-2 text-right tabular-nums font-medium">{stock.price.toLocaleString()}원</td>
+                      <td className={`px-4 py-2 text-right tabular-nums font-bold ${getChangeColor(stock.changePercent)}`}>
+                        {formatPercent(stock.changePercent)}
+                      </td>
+                      <td className="px-4 py-2 text-right tabular-nums font-medium text-amber-600 dark:text-amber-400">
+                        {formatMoney(stock.tradingValue)}
+                      </td>
+                      <td className="px-4 py-2 text-right tabular-nums text-gray-600 dark:text-gray-400">
+                        {formatMoney(stock.marketCap)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {selectedSector === "all" && allStocks.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

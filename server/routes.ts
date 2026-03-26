@@ -6,6 +6,7 @@ import { Router, type Request, type Response } from "express";
 import * as storage from "./storage";
 import { KisApi, calculateMA, calculateRSI, calculateMACD, calculateATR } from "./kisApi";
 import { TelegramService } from "./telegram";
+import { sendAlert } from "./telegram";
 import { SignalEngine } from "./signals";
 import { TradingEngine } from "./tradingEngine";
 import { AutoScanner } from "./autoScanner";
@@ -778,6 +779,81 @@ export function createRouter() {
         .map(r => r.value);
 
       res.json(results);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  router.post("/api/biotech/report/telegram", async (_req: Request, res: Response) => {
+    try {
+      const api = await getKisApi();
+
+      // Collect all unique biotech stocks
+      const stockMap = new Map<string, { code: string; name: string; sectors: string[] }>();
+      for (const [sectorKey, stocks] of Object.entries(BIOTECH_SECTORS)) {
+        for (const s of stocks) {
+          const existing = stockMap.get(s.code);
+          if (existing) {
+            existing.sectors.push(sectorKey);
+          } else {
+            stockMap.set(s.code, { code: s.code, name: s.name, sectors: [sectorKey] });
+          }
+        }
+      }
+
+      const entries = Array.from(stockMap.entries());
+      const settled = await Promise.allSettled(
+        entries.map(async ([code, info]) => {
+          const price = await api.getStockPrice(code);
+          if (!price) return null;
+          return {
+            name: info.name,
+            code: info.code,
+            sectors: info.sectors,
+            price: Number(price.stck_prpr) || 0,
+            changePercent: Number(price.prdy_ctrt) || 0,
+            tradingValue: Number(price.acml_tr_pbmn) || 0,
+            volume: Number(price.acml_vol) || 0,
+            marketCap: Number(price.hts_avls) || 0,
+          };
+        })
+      );
+
+      const allStocks = settled
+        .filter((r): r is PromiseFulfilledResult<any> => r.status === "fulfilled" && r.value != null)
+        .map(r => r.value);
+
+      // Filter: trading value >= 1000억 (100,000,000,000)
+      const threshold = 1000_0000_0000;
+      const hotStocks = allStocks
+        .filter((s: any) => s.tradingValue >= threshold)
+        .sort((a: any, b: any) => b.changePercent - a.changePercent);
+
+      if (hotStocks.length === 0) {
+        res.json({ success: true, message: "거래대금 1000억 이상 바이오 종목이 없습니다", sent: 0 });
+        return;
+      }
+
+      const now = new Date().toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
+      let msg = `🧬 <b>[바이오] 거래대금 1,000억+ 종목</b>\n`;
+      msg += `📅 ${now}\n\n`;
+      msg += `<pre>`;
+      msg += `${"종목명".padEnd(10)}${"등락률".padStart(8)}${"거래대금".padStart(10)}${"시총".padStart(8)}\n`;
+      msg += `${"─".repeat(36)}\n`;
+
+      for (const s of hotStocks) {
+        const chg = (s.changePercent > 0 ? "+" : "") + s.changePercent.toFixed(2) + "%";
+        const tv = (s.tradingValue / 1_0000_0000).toFixed(0) + "억";
+        const mc = s.marketCap >= 1_0000_0000
+          ? (s.marketCap / 1_0000_0000).toFixed(1) + "조"
+          : (s.marketCap / 10000).toFixed(0) + "억";
+        msg += `${s.name.padEnd(10)}${chg.padStart(8)}${tv.padStart(10)}${mc.padStart(8)}\n`;
+      }
+      msg += `</pre>\n`;
+      msg += `총 ${hotStocks.length}종목 | 등락률순 정렬`;
+
+      const ok = await sendAlert(msg);
+      res.json({ success: ok, count: hotStocks.length });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
