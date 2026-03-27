@@ -4,46 +4,52 @@
  */
 import { Router, type Request, type Response } from "express";
 import * as storage from "./storage";
-import { KisApi, calculateMA, calculateRSI, calculateMACD, calculateATR } from "./kisApi";
-import { TelegramService } from "./telegram";
-import { SignalEngine } from "./signals";
-import { TradingEngine } from "./tradingEngine";
-import { AutoScanner } from "./autoScanner";
+import {
+  getStockPrice,
+  getDailyPrices as kisGetDailyPrices,
+  getVolumeRanking,
+  getMarketVolumeRankings,
+  getAccountBalance,
+  checkConnection,
+  calculateMA,
+  calculateRSI,
+  calculateMACD,
+  calculateATR,
+} from "./kisApi";
+import {
+  getTelegramConfig,
+  sendTelegramMessage,
+  sendAlert,
+  autoDetectChatId,
+} from "./telegram";
+import {
+  getActiveSignals,
+  runSignalScan,
+  confirmSignal,
+  dismissSignal,
+} from "./signals";
+import {
+  startAutoTrading,
+  stopAutoTrading,
+  getTradingStatus,
+  getTradingLogs,
+  getTradeOrders,
+  getTradingPositions,
+  manualScan,
+  manualSellAll,
+  manualBuy,
+} from "./tradingEngine";
+import {
+  scanAndAlert,
+  startAutoScan,
+  stopAutoScan,
+  getAutoScanStatus,
+} from "./autoScanner";
 import type { TradingSignal, PlaybookData, ScreeningInputs } from "../shared/schema";
 import { screeningInputsSchema } from "../shared/schema";
 
 export function createRouter() {
   const router = Router();
-
-  // Singletons (lazy init)
-  let kisApi: KisApi | null = null;
-  let telegram: TelegramService | null = null;
-  let signalEngine: SignalEngine | null = null;
-  let tradingEngine: TradingEngine | null = null;
-  let autoScanner: AutoScanner | null = null;
-
-  // ─── Init helpers ─────────────────────────────────────────────
-
-  async function getKisApi(): Promise<KisApi> {
-    if (!kisApi) kisApi = new KisApi();
-    return kisApi;
-  }
-
-  async function getTelegram(): Promise<TelegramService> {
-    if (!telegram) {
-      const s = await storage.getSettings();
-      telegram = new TelegramService(s?.telegramBotToken || "", s?.telegramChatId || "");
-    }
-    return telegram;
-  }
-
-  async function getSignalEngine(): Promise<SignalEngine> {
-    if (!signalEngine) {
-      const tg = await getTelegram();
-      signalEngine = new SignalEngine(tg);
-    }
-    return signalEngine;
-  }
 
   // ═══════════════════════════════════════════════════════════════
   // Dashboard / Stats
@@ -84,8 +90,7 @@ export function createRouter() {
 
   router.get("/api/stocks/:code/price", async (req: Request, res: Response) => {
     try {
-      const api = await getKisApi();
-      const price = await api.getStockPrice(req.params.code);
+      const price = await getStockPrice(req.params.code);
       res.json(price);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -94,18 +99,17 @@ export function createRouter() {
 
   router.get("/api/stocks/:code/daily", async (req: Request, res: Response) => {
     try {
-      const api = await getKisApi();
-      const days = parseInt(req.query.days as string) || 60;
-      const dailyData = await api.getDailyPrices(req.params.code, days);
-      // calculate indicators
-      const closes = dailyData.map((d: any) => d.close);
+      const dailyData = await kisGetDailyPrices(req.params.code);
+      const closes = dailyData.map((d: any) => Number(d.stck_clpr)).filter(Boolean);
+      const highs = dailyData.map((d: any) => Number(d.stck_hgpr)).filter(Boolean);
+      const lows = dailyData.map((d: any) => Number(d.stck_lwpr)).filter(Boolean);
       const indicators = {
         ma5: calculateMA(closes, 5),
         ma20: calculateMA(closes, 20),
         ma60: calculateMA(closes, 60),
         rsi: calculateRSI(closes, 14),
         macd: calculateMACD(closes),
-        atr: calculateATR(dailyData.map((d: any) => ({ high: d.high, low: d.low, close: d.close })), 14),
+        atr: calculateATR(highs, lows, closes, 14),
       };
       res.json({ daily: dailyData, indicators });
     } catch (e: any) {
@@ -119,9 +123,8 @@ export function createRouter() {
 
   router.get("/api/rankings/volume", async (req: Request, res: Response) => {
     try {
-      const api = await getKisApi();
-      const market = (req.query.market as string) || "KOSPI";
-      const rankings = await api.getVolumeRanking(market);
+      const market = (req.query.market as string) || "J";
+      const rankings = await getVolumeRanking(market);
       res.json(rankings);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -130,8 +133,7 @@ export function createRouter() {
 
   router.get("/api/rankings/all", async (req: Request, res: Response) => {
     try {
-      const api = await getKisApi();
-      const data = await api.getMarketVolumeRankings();
+      const data = await getMarketVolumeRankings();
       res.json(data);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -144,14 +146,8 @@ export function createRouter() {
 
   router.post("/api/scan/run", async (_req: Request, res: Response) => {
     try {
-      if (!autoScanner) {
-        const api = await getKisApi();
-        const tg = await getTelegram();
-        const sig = await getSignalEngine();
-        autoScanner = new AutoScanner(api, tg, sig);
-      }
-      const results = await autoScanner.scanAndAlert();
-      res.json({ success: true, count: results.length, results });
+      await scanAndAlert();
+      res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -159,14 +155,8 @@ export function createRouter() {
 
   router.post("/api/scan/auto/start", async (req: Request, res: Response) => {
     try {
-      if (!autoScanner) {
-        const api = await getKisApi();
-        const tg = await getTelegram();
-        const sig = await getSignalEngine();
-        autoScanner = new AutoScanner(api, tg, sig);
-      }
       const interval = parseInt(req.body?.interval) || 10;
-      autoScanner.start(interval);
+      startAutoScan(interval);
       res.json({ success: true, message: `Auto-scan started (${interval}min interval)` });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -175,7 +165,7 @@ export function createRouter() {
 
   router.post("/api/scan/auto/stop", async (_req: Request, res: Response) => {
     try {
-      autoScanner?.stop();
+      stopAutoScan();
       res.json({ success: true, message: "Auto-scan stopped" });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -183,7 +173,7 @@ export function createRouter() {
   });
 
   router.get("/api/scan/auto/status", async (_req: Request, res: Response) => {
-    res.json({ isRunning: autoScanner?.isRunning() || false });
+    res.json(getAutoScanStatus());
   });
 
   router.get("/api/scan/results", async (req: Request, res: Response) => {
@@ -214,8 +204,7 @@ export function createRouter() {
 
   router.get("/api/signals", async (_req: Request, res: Response) => {
     try {
-      const engine = await getSignalEngine();
-      res.json(engine.getSignals());
+      res.json(getActiveSignals());
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -223,42 +212,38 @@ export function createRouter() {
 
   router.post("/api/signals/scan", async (_req: Request, res: Response) => {
     try {
-      const api = await getKisApi();
-      const engine = await getSignalEngine();
-      // Scan KOSPI + KOSDAQ top volume stocks
-      const allStocks = await api.getMarketVolumeRankings();
-      const signals: TradingSignal[] = [];
+      const allStocks = await getMarketVolumeRankings();
+      const stockQuotes: any[] = [];
       for (const stock of allStocks.slice(0, 30)) {
         try {
-          const dailyData = await api.getDailyPrices(stock.code, 60);
+          const code = stock.mksc_shrn_iscd || stock.stck_shrn_iscd;
+          if (!code) continue;
+          const dailyData = await kisGetDailyPrices(code);
           if (dailyData.length < 20) continue;
-          const closes = dailyData.map((d: any) => d.close);
-          const newSignals = engine.analyzeStock({
-            code: stock.code,
-            name: stock.name,
-            market: stock.market || "KOSPI",
-            price: stock.price,
-            change: stock.change || 0,
-            changePercent: stock.changePercent || 0,
-            open: stock.open || stock.price,
-            high: stock.high || stock.price,
-            low: stock.low || stock.price,
-            close: stock.close || stock.price,
-            prevClose: stock.prevClose || stock.price,
-            volume: stock.volume || 0,
-            tradingValue: stock.tradingValue || 0,
+          const closes = dailyData.map((d: any) => Number(d.stck_clpr)).filter(Boolean);
+          const highs = dailyData.map((d: any) => Number(d.stck_hgpr)).filter(Boolean);
+          const lows = dailyData.map((d: any) => Number(d.stck_lwpr)).filter(Boolean);
+          stockQuotes.push({
+            code,
+            name: stock.hts_kor_isnm || "",
+            market: stock._market || "KOSPI",
+            price: Number(stock.stck_prpr) || 0,
+            change: Number(stock.prdy_vrss) || 0,
+            changePercent: Number(stock.prdy_ctrt) || 0,
+            volume: Number(stock.acml_vol) || 0,
+            tradingValue: Number(stock.acml_tr_pbmn) || 0,
             ma5: calculateMA(closes, 5),
             ma20: calculateMA(closes, 20),
             ma60: calculateMA(closes, 60),
             rsi: calculateRSI(closes, 14),
             macd: calculateMACD(closes).macd,
-            atr: calculateATR(dailyData.map((d: any) => ({ high: d.high, low: d.low, close: d.close })), 14),
-            volumeRatio: stock.volume && dailyData.length > 5 ?
-              stock.volume / (dailyData.slice(0, 5).reduce((s: number, d: any) => s + d.volume, 0) / 5) : 1,
+            atr: calculateATR(highs, lows, closes, 14),
+            volumeRatio: Number(stock.prdy_vol) > 0 ?
+              Number(stock.acml_vol) / Number(stock.prdy_vol) : 1,
           });
-          signals.push(...newSignals);
         } catch { /* skip failed stocks */ }
       }
+      const signals = await runSignalScan(stockQuotes, true);
       res.json({ success: true, count: signals.length, signals });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -267,8 +252,7 @@ export function createRouter() {
 
   router.post("/api/signals/:id/confirm", async (req: Request, res: Response) => {
     try {
-      const engine = await getSignalEngine();
-      engine.confirmSignal(req.params.id);
+      confirmSignal(req.params.id);
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -277,8 +261,7 @@ export function createRouter() {
 
   router.post("/api/signals/:id/dismiss", async (req: Request, res: Response) => {
     try {
-      const engine = await getSignalEngine();
-      engine.dismissSignal(req.params.id);
+      dismissSignal(req.params.id);
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -291,13 +274,7 @@ export function createRouter() {
 
   router.post("/api/trading/start", async (_req: Request, res: Response) => {
     try {
-      if (!tradingEngine) {
-        const api = await getKisApi();
-        const tg = await getTelegram();
-        const sig = await getSignalEngine();
-        tradingEngine = new TradingEngine(api, tg, sig);
-      }
-      tradingEngine.start();
+      startAutoTrading();
       res.json({ success: true, message: "Trading engine started" });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -306,7 +283,7 @@ export function createRouter() {
 
   router.post("/api/trading/stop", async (_req: Request, res: Response) => {
     try {
-      tradingEngine?.stop();
+      stopAutoTrading();
       res.json({ success: true, message: "Trading engine stopped" });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -315,13 +292,7 @@ export function createRouter() {
 
   router.get("/api/trading/status", async (_req: Request, res: Response) => {
     try {
-      if (!tradingEngine) {
-        return res.json({
-          isRunning: false, mode: "manual", lastScanTime: null,
-          nextScanTime: null, positionCount: 0, todayPnl: 0,
-        });
-      }
-      res.json(tradingEngine.getStatus());
+      res.json(getTradingStatus());
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -329,7 +300,7 @@ export function createRouter() {
 
   router.get("/api/trading/positions", async (_req: Request, res: Response) => {
     try {
-      res.json(tradingEngine?.getPositions() || []);
+      res.json(getTradingPositions());
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -337,7 +308,7 @@ export function createRouter() {
 
   router.get("/api/trading/orders", async (_req: Request, res: Response) => {
     try {
-      res.json(tradingEngine?.getOrders() || []);
+      res.json(getTradeOrders());
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -345,7 +316,7 @@ export function createRouter() {
 
   router.get("/api/trading/logs", async (_req: Request, res: Response) => {
     try {
-      res.json(tradingEngine?.getLogs() || []);
+      res.json(getTradingLogs());
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -353,9 +324,8 @@ export function createRouter() {
 
   router.post("/api/trading/scan", async (_req: Request, res: Response) => {
     try {
-      if (!tradingEngine) return res.status(400).json({ error: "Trading engine not initialized" });
-      const results = await tradingEngine.manualScan();
-      res.json({ success: true, results });
+      await manualScan();
+      res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -363,10 +333,22 @@ export function createRouter() {
 
   router.post("/api/trading/buy", async (req: Request, res: Response) => {
     try {
-      if (!tradingEngine) return res.status(400).json({ error: "Trading engine not initialized" });
-      const { stockCode, stockName, price, quantity } = req.body;
-      const order = await tradingEngine.manualBuy(stockCode, stockName, price, quantity);
-      res.json({ success: true, order });
+      const { stockCode, stockName, price } = req.body;
+      await manualBuy([{
+        code: stockCode,
+        name: stockName,
+        price: Number(price),
+        change: 0,
+        changePercent: 0,
+        volume: 0,
+        tradingValue: 0,
+        prevVolume: 0,
+        high: Number(price),
+        ma5: 0,
+        ma20: 0,
+        ma60: 0,
+      }]);
+      res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -374,9 +356,8 @@ export function createRouter() {
 
   router.post("/api/trading/sell-all", async (_req: Request, res: Response) => {
     try {
-      if (!tradingEngine) return res.status(400).json({ error: "Trading engine not initialized" });
-      const results = await tradingEngine.sellAll();
-      res.json({ success: true, results });
+      await manualSellAll();
+      res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -391,38 +372,38 @@ export function createRouter() {
       const parsed = screeningInputsSchema.safeParse(req.body);
       const inputs: ScreeningInputs = parsed.success ? parsed.data : screeningInputsSchema.parse({});
 
-      const api = await getKisApi();
-      const rankings = await api.getMarketVolumeRankings();
+      const rankings = await getMarketVolumeRankings();
 
       // Filter by market
       let candidates = rankings;
       if (inputs.market === "kospi") {
-        candidates = rankings.filter((s: any) => s.market === "KOSPI");
+        candidates = rankings.filter((s: any) => (s._market || "KOSPI") === "KOSPI");
       }
 
       // Filter by liquidity
-      candidates = candidates.filter((s: any) =>
-        (s.price || 0) >= inputs.minPrice &&
-        (s.tradingValue || 0) >= inputs.minVolumeMoney
-      );
+      candidates = candidates.filter((s: any) => {
+        const price = Number(s.stck_prpr) || 0;
+        const tradingValue = Number(s.acml_tr_pbmn) || 0;
+        return price >= inputs.minPrice && tradingValue >= inputs.minVolumeMoney;
+      });
 
       const results: any[] = [];
 
       for (const stock of candidates.slice(0, 50)) {
         try {
-          const dailyData = await api.getDailyPrices(stock.code, 60);
+          const code = stock.mksc_shrn_iscd || stock.stck_shrn_iscd;
+          if (!code) continue;
+          const dailyData = await kisGetDailyPrices(code);
           if (dailyData.length < inputs.breakoutPeriod) continue;
 
-          const closes = dailyData.map((d: any) => d.close);
-          const highs = dailyData.map((d: any) => d.high);
-          const lows = dailyData.map((d: any) => d.low);
+          const closes = dailyData.map((d: any) => Number(d.stck_clpr)).filter(Boolean);
+          const highs = dailyData.map((d: any) => Number(d.stck_hgpr)).filter(Boolean);
+          const lows = dailyData.map((d: any) => Number(d.stck_lwpr)).filter(Boolean);
+          const volumes = dailyData.map((d: any) => Number(d.acml_vol)).filter(Boolean);
 
           const rsi = calculateRSI(closes, inputs.rsiPeriod);
           const macdResult = calculateMACD(closes, inputs.macdFast, inputs.macdSlow, inputs.macdSignal);
-          const atr = calculateATR(
-            dailyData.map((d: any) => ({ high: d.high, low: d.low, close: d.close })),
-            inputs.atrPeriod
-          );
+          const atr = calculateATR(highs, lows, closes, inputs.atrPeriod);
 
           // Breakout detection
           const recentHighs = highs.slice(0, inputs.breakoutPeriod);
@@ -431,12 +412,13 @@ export function createRouter() {
           const lowestLow = Math.min(...recentLows);
 
           let signal: "BUY" | "SELL" | "SKIP" = "SKIP";
-          let strategy = "turtle_breakout";
+          const strategy = "turtle_breakout";
           let confidence = 50;
           let reasoning = "";
           let entryTrigger = "";
 
-          const currentPrice = stock.price || closes[0];
+          const currentPrice = Number(stock.stck_prpr) || closes[0];
+          const currentVolume = Number(stock.acml_vol) || 0;
 
           // Buy signal: price breaks above N-day high
           if (currentPrice >= highestHigh * 0.98) {
@@ -447,7 +429,8 @@ export function createRouter() {
 
             if (rsi > inputs.rsiOversold && rsi < inputs.rsiOverbought) confidence += 10;
             if (macdResult.macd > macdResult.signal) confidence += 10;
-            if (stock.volume > (dailyData.slice(0, 5).reduce((s: number, d: any) => s + d.volume, 0) / 5) * inputs.breakoutConfirmVolume) {
+            const avgVolume5 = volumes.slice(0, 5).reduce((s, v) => s + v, 0) / 5;
+            if (currentVolume > avgVolume5 * inputs.breakoutConfirmVolume) {
               confidence += 15;
               reasoning += ` | 거래량 확인 완료`;
             }
@@ -465,9 +448,9 @@ export function createRouter() {
             const targetPrice = signal === "BUY" ? currentPrice + atr * 4 : currentPrice - atr * 4;
 
             results.push({
-              stockCode: stock.code,
-              stockName: stock.name,
-              market: stock.market || "KOSPI",
+              stockCode: code,
+              stockName: stock.hts_kor_isnm || "",
+              market: stock._market || "KOSPI",
               signal,
               strategy,
               price: currentPrice,
@@ -604,8 +587,9 @@ export function createRouter() {
 
   router.post("/api/telegram/test", async (_req: Request, res: Response) => {
     try {
-      const tg = await getTelegram();
-      const ok = await tg.sendMessage("✅ KIS 통합 시스템 텔레그램 연결 테스트 성공!");
+      const config = await getTelegramConfig();
+      if (!config) return res.status(400).json({ error: "Telegram not configured" });
+      const ok = await sendTelegramMessage(config.token, config.chatId, "✅ KIS 통합 시스템 텔레그램 연결 테스트 성공!");
       res.json({ success: ok });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -614,8 +598,10 @@ export function createRouter() {
 
   router.post("/api/telegram/detect-chat", async (_req: Request, res: Response) => {
     try {
-      const tg = await getTelegram();
-      const chatId = await tg.detectChatId();
+      const s = await storage.getSettings();
+      const token = s?.telegramBotToken || process.env.TELEGRAM_BOT_TOKEN || "";
+      if (!token) return res.status(400).json({ error: "Bot token not configured" });
+      const chatId = await autoDetectChatId(token);
       if (chatId) {
         await storage.upsertSettings({ telegramChatId: chatId });
         res.json({ success: true, chatId });
@@ -631,8 +617,7 @@ export function createRouter() {
     try {
       const { message } = req.body;
       if (!message) return res.status(400).json({ error: "Message required" });
-      const tg = await getTelegram();
-      const ok = await tg.sendMessage(message);
+      const ok = await sendAlert(message);
       res.json({ success: ok });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -647,7 +632,6 @@ export function createRouter() {
     try {
       const s = await storage.getSettings();
       if (s) {
-        // Mask sensitive data
         const masked = {
           ...s,
           telegramBotToken: s.telegramBotToken ? "***설정됨***" : "",
@@ -666,9 +650,6 @@ export function createRouter() {
   router.post("/api/settings", async (req: Request, res: Response) => {
     try {
       const updated = await storage.upsertSettings(req.body);
-      // Reset singletons so they pick up new settings
-      telegram = null;
-      signalEngine = null;
       res.json({ success: true, settings: updated });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -681,9 +662,8 @@ export function createRouter() {
 
   router.get("/api/kis/status", async (_req: Request, res: Response) => {
     try {
-      const api = await getKisApi();
-      const ok = await api.checkConnection();
-      res.json({ connected: ok });
+      const result = await checkConnection();
+      res.json({ connected: result.success, message: result.message });
     } catch (e: any) {
       res.json({ connected: false, error: e.message });
     }
@@ -691,8 +671,7 @@ export function createRouter() {
 
   router.get("/api/kis/balance", async (_req: Request, res: Response) => {
     try {
-      const api = await getKisApi();
-      const balance = await api.getAccountBalance();
+      const balance = await getAccountBalance();
       res.json(balance);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
