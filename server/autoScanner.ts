@@ -11,6 +11,7 @@ import { runSignalScan } from "./signals";
 import { db } from "./db";
 import { scanResults, scanHistory } from "../shared/schema";
 import type { StockQuote } from "../shared/schema";
+import { sleep } from "./utils";
 
 // ─── State ───────────────────────────────────────────────────────
 
@@ -184,6 +185,3 @@ export function getAutoScanStatus() {
   };
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}

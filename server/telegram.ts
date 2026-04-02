@@ -13,6 +13,7 @@
 import { db } from "./db";
 import { settings } from "../shared/schema";
 import type { TradingSignal, StockQuote, PlaybookData } from "../shared/schema";
+import { sleep } from "./utils";
 
 // ─── Core Telegram Functions ─────────────────────────────────────
 
@@ -269,8 +270,3 @@ export async function sendBatchAlerts(messages: string[]): Promise<number> {
   return sent;
 }
 
-// ─── Helper ──────────────────────────────────────────────────────
-
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}

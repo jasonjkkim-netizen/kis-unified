@@ -8,6 +8,7 @@ import type { TradeOrder, TradingPosition, TradingStatus, TradingLog } from "../
 import { getMarketVolumeRankings, placeBuyOrder, placeSellOrder, calculateMA, calculateRSI, getDailyPrices } from "./kisApi";
 import { formatTradingAlert, sendAlert } from "./telegram";
 import { runSignalScan } from "./signals";
+import { sleep } from "./utils";
 
 // ─── State ───────────────────────────────────────────────────────
 
@@ -75,7 +76,7 @@ async function scanAndTrade(): Promise<void> {
     const rankings = await getMarketVolumeRankings();
     const candidates: FilterCandidate[] = [];
     
-    for (const item of rankings) {
+    for (const item of rankings.slice(0, 50)) {
       const code = item.mksc_shrn_iscd || item.stck_shrn_iscd;
       if (!code) continue;
       
@@ -144,6 +145,7 @@ async function executeBuys(candidates: FilterCandidate[]): Promise<void> {
         timestamp: new Date().toISOString(),
       };
       tradeOrders.push(order);
+      trimOrders();
 
       tradingPositions.push({
         stockCode: c.code, stockName: c.name,
@@ -185,12 +187,22 @@ async function executeSellAll(): Promise<void> {
 
 // ─── Scheduler ───────────────────────────────────────────────────
 
+let lastTriggeredMinute: string | null = null;
+
 function checkSchedule(): void {
   if (!isAutoTrading || !isWeekday()) return;
   const { hours, minutes } = getKSTTime();
-  
-  if (hours === 15 && minutes === 15) scanAndTrade();
-  if (hours === 9 && minutes === 5 && tradingPositions.length > 0) executeSellAll();
+  const minuteKey = `${hours}:${minutes}`;
+  if (minuteKey === lastTriggeredMinute) return;
+
+  if (hours === 15 && minutes === 15) {
+    lastTriggeredMinute = minuteKey;
+    scanAndTrade();
+  }
+  if (hours === 9 && minutes === 5 && tradingPositions.length > 0) {
+    lastTriggeredMinute = minuteKey;
+    executeSellAll();
+  }
 }
 
 // ─── Public API ──────────────────────────────────────────────────
@@ -232,11 +244,16 @@ function getNextScanTime(): string {
   return kst.toISOString();
 }
 
+const MAX_LOG_SIZE = 200;
+const MAX_ORDER_SIZE = 500;
+
 function log(type: TradingLog["type"], message: string): void {
   tradingLogs.push({ timestamp: new Date().toISOString(), type, message });
+  if (tradingLogs.length > MAX_LOG_SIZE) tradingLogs.splice(0, tradingLogs.length - MAX_LOG_SIZE);
   console.log(`[Trading:${type}] ${message}`);
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+function trimOrders(): void {
+  if (tradeOrders.length > MAX_ORDER_SIZE) tradeOrders.splice(0, tradeOrders.length - MAX_ORDER_SIZE);
 }
+

@@ -14,6 +14,7 @@
 import { db } from "./db";
 import { settings } from "../shared/schema";
 import { eq } from "drizzle-orm";
+import { sleep } from "./utils";
 
 const KIS_BASE_URL = "https://openapi.koreainvestment.com:9443";
 
@@ -206,7 +207,14 @@ export async function getStockPrice(stockCode: string): Promise<any> {
   return data?.output;
 }
 
+const dailyPriceCache = new Map<string, { data: any[]; expiry: number }>();
+const DAILY_PRICE_TTL = 5 * 60 * 1000; // 5 minutes
+
 export async function getDailyPrices(stockCode: string, period: string = "D"): Promise<any[]> {
+  const cacheKey = `${stockCode}:${period}`;
+  const cached = dailyPriceCache.get(cacheKey);
+  if (cached && cached.expiry > Date.now()) return cached.data;
+
   const today = new Date();
   const start = new Date(today);
   start.setDate(start.getDate() - 90);
@@ -224,7 +232,9 @@ export async function getDailyPrices(stockCode: string, period: string = "D"): P
       FID_ORG_ADJ_PRC: "0",
     }
   );
-  return data?.output2 || [];
+  const result = data?.output2 || [];
+  dailyPriceCache.set(cacheKey, { data: result, expiry: Date.now() + DAILY_PRICE_TTL });
+  return result;
 }
 
 // ─── Volume Rankings ─────────────────────────────────────────────
@@ -421,8 +431,3 @@ export function calculateATR(
   return atrSum / period;
 }
 
-// ─── Helper ──────────────────────────────────────────────────────
-
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
