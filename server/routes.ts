@@ -48,6 +48,15 @@ import {
 import type { TradingSignal, PlaybookData, ScreeningInputs } from "../shared/schema";
 import { screeningInputsSchema } from "../shared/schema";
 
+function extractPriceSeries(dailyData: any[]) {
+  return {
+    closes: dailyData.map((d: any) => Number(d.stck_clpr)).filter(Boolean),
+    highs: dailyData.map((d: any) => Number(d.stck_hgpr)).filter(Boolean),
+    lows: dailyData.map((d: any) => Number(d.stck_lwpr)).filter(Boolean),
+    volumes: dailyData.map((d: any) => Number(d.acml_vol)).filter(Boolean),
+  };
+}
+
 export function createRouter() {
   const router = Router();
 
@@ -100,9 +109,7 @@ export function createRouter() {
   router.get("/api/stocks/:code/daily", async (req: Request, res: Response) => {
     try {
       const dailyData = await kisGetDailyPrices(req.params.code);
-      const closes = dailyData.map((d: any) => Number(d.stck_clpr)).filter(Boolean);
-      const highs = dailyData.map((d: any) => Number(d.stck_hgpr)).filter(Boolean);
-      const lows = dailyData.map((d: any) => Number(d.stck_lwpr)).filter(Boolean);
+      const { closes, highs, lows } = extractPriceSeries(dailyData);
       const indicators = {
         ma5: calculateMA(closes, 5),
         ma20: calculateMA(closes, 20),
@@ -220,9 +227,7 @@ export function createRouter() {
           if (!code) continue;
           const dailyData = await kisGetDailyPrices(code);
           if (dailyData.length < 20) continue;
-          const closes = dailyData.map((d: any) => Number(d.stck_clpr)).filter(Boolean);
-          const highs = dailyData.map((d: any) => Number(d.stck_hgpr)).filter(Boolean);
-          const lows = dailyData.map((d: any) => Number(d.stck_lwpr)).filter(Boolean);
+          const { closes, highs, lows } = extractPriceSeries(dailyData);
           stockQuotes.push({
             code,
             name: stock.hts_kor_isnm || "",
@@ -396,10 +401,7 @@ export function createRouter() {
           const dailyData = await kisGetDailyPrices(code);
           if (dailyData.length < inputs.breakoutPeriod) continue;
 
-          const closes = dailyData.map((d: any) => Number(d.stck_clpr)).filter(Boolean);
-          const highs = dailyData.map((d: any) => Number(d.stck_hgpr)).filter(Boolean);
-          const lows = dailyData.map((d: any) => Number(d.stck_lwpr)).filter(Boolean);
-          const volumes = dailyData.map((d: any) => Number(d.acml_vol)).filter(Boolean);
+          const { closes, highs, lows, volumes } = extractPriceSeries(dailyData);
 
           const rsi = calculateRSI(closes, inputs.rsiPeriod);
           const macdResult = calculateMACD(closes, inputs.macdFast, inputs.macdSlow, inputs.macdSignal);
